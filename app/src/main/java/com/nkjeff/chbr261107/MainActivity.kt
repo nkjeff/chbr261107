@@ -1,14 +1,16 @@
 package com.nkjeff.chbr261107
 
 import android.app.Activity
-import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
@@ -18,9 +20,8 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import java.net.URLEncoder
 
 class MainActivity : Activity() {
@@ -40,6 +41,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = black
         window.navigationBarColor = black
+        window.decorView.setBackgroundColor(black)
         buildLayout()
         addTab("https://www.google.com")
     }
@@ -55,7 +57,7 @@ class MainActivity : Activity() {
             setSingleLine(true)
             textSize = 14f
             setTextColor(white)
-            setHintTextColor(0xFF888888.toInt())
+            setHintTextColor(0x99FFFFFF.toInt())
             hint = "搜索或输入网址"
             setPadding(dp(12), 0, dp(8), 0)
             background = addressBackground()
@@ -119,32 +121,20 @@ class MainActivity : Activity() {
         web.setOnLongClickListener { view ->
             val hit = (view as WebView).hitTestResult
             val target = hit.extra.orEmpty()
-            if (target.isBlank()) return@setOnLongClickListener false
-            showLongPressMenu(view, hit.type, target)
-            true
+            val isLinkOrImage = hit.type == WebView.HitTestResult.ANCHOR_TYPE ||
+                hit.type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+                hit.type == WebView.HitTestResult.IMAGE_TYPE ||
+                hit.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+            if (!isLinkOrImage || target.isBlank()) {
+                false
+            } else {
+                addTab(target)
+                true
+            }
         }
         tabs.add(BrowserTab(web, url = url))
         selectTab(tabs.lastIndex)
         if (url != "about:blank") web.loadUrl(url)
-    }
-
-    private fun showLongPressMenu(web: WebView, type: Int, target: String) {
-        val menu = PopupMenu(this, web)
-        val image = type == WebView.HitTestResult.IMAGE_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
-        val link = type == WebView.HitTestResult.ANCHOR_TYPE || type == WebView.HitTestResult.SRC_ANCHOR_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
-        if (link) menu.menu.add("在新标签页打开链接").setOnMenuItemClickListener { addTab(target); true }
-        if (image) menu.menu.add("Google 搜图").setOnMenuItemClickListener {
-            val search = "https://www.google.com/searchbyimage?image_url=" + URLEncoder.encode(target, "UTF-8")
-            addTab(search)
-            true
-        }
-        menu.menu.add("复制地址").setOnMenuItemClickListener {
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", target))
-            Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
-            true
-        }
-        menu.show()
     }
 
     private fun selectTab(index: Int) {
@@ -160,12 +150,87 @@ class MainActivity : Activity() {
     }
 
     private fun showTabs() {
-        val labels = tabs.mapIndexed { i, tab -> (if (i == current) "● " else "") + (i + 1).toString() + ". " + tab.title.take(32) }.toMutableList()
-        labels.add("＋ 新建标签页")
-        AlertDialog.Builder(this).setItems(labels.toTypedArray()) { _, which ->
-            if (which == tabs.size) addTab("about:blank") else selectTab(which)
-        }.setNeutralButton("关闭当前标签") { _, _ -> closeTab(current) }
-            .setNegativeButton("取消", null).show()
+        val dialog = Dialog(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(14))
+            background = ColorDrawable(0xE6000000.toInt())
+        }
+        val heading = TextView(this).apply {
+            text = "标签页"
+            textSize = 17f
+            setTextColor(white)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(14))
+        }
+        panel.addView(heading, LinearLayout.LayoutParams(-1, -2))
+
+        val list = ScrollView(this)
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        tabs.forEachIndexed { index, tab ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(5), dp(4), dp(5))
+                setBackgroundColor(if (index == current) 0x22FFFFFF else Color.TRANSPARENT)
+            }
+            val label = TextView(this).apply {
+                text = (index + 1).toString() + "  " + tab.title.take(28)
+                textSize = 14f
+                setTextColor(white)
+                gravity = Gravity.CENTER_VERTICAL
+                maxLines = 1
+                isClickable = true
+                setOnClickListener { dialog.dismiss(); selectTab(index) }
+            }
+            row.addView(label, LinearLayout.LayoutParams(0, dp(42), 1f))
+            val close = TextView(this).apply {
+                text = "×"
+                textSize = 23f
+                setTextColor(white)
+                gravity = Gravity.CENTER
+                setOnClickListener { dialog.dismiss(); closeTab(index) }
+            }
+            row.addView(close, LinearLayout.LayoutParams(dp(40), dp(42)))
+            rows.addView(row)
+        }
+        list.addView(rows)
+        panel.addView(list, LinearLayout.LayoutParams(-1, dp( minOf(260, maxOf(64, tabs.size * 52)) )))
+        val newTab = menuAction("新建标签页") {
+            dialog.dismiss()
+            addTab("about:blank")
+        }
+        panel.addView(newTab, LinearLayout.LayoutParams(-1, dp(44)))
+        val closeCurrent = menuAction("关闭当前标签") {
+            dialog.dismiss()
+            closeTab(current)
+        }
+        panel.addView(closeCurrent, LinearLayout.LayoutParams(-1, dp(40)))
+        val cancel = menuAction("取消") { dialog.dismiss() }
+        panel.addView(cancel, LinearLayout.LayoutParams(-1, dp(38)))
+
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(panel)
+        dialog.setCancelable(true)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.62f)
+            setLayout((resources.displayMetrics.widthPixels * 0.84f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
+        dialog.show()
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.84f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun menuAction(label: String, action: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 14f
+        setTextColor(white)
+        gravity = Gravity.CENTER
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { action() }
     }
 
     private fun closeTab(index: Int) {
@@ -195,12 +260,18 @@ class MainActivity : Activity() {
         forwardButton.alpha = if (activeWeb()?.canGoForward() == true) 1f else 0.45f
     }
     private fun textButton(label: String) = TextView(this).apply {
-        text = label; textSize = 22f; gravity = Gravity.CENTER; setTextColor(white)
-        isClickable = true; isFocusable = true
-        background = android.graphics.drawable.ColorDrawable(black)
+        text = label
+        textSize = 22f
+        gravity = Gravity.CENTER
+        setTextColor(white)
+        isClickable = true
+        isFocusable = true
+        background = ColorDrawable(black)
     }
     private fun addressBackground() = GradientDrawable().apply {
-        setColor(0xFF080808.toInt()); setStroke(dp(1), 0xFF555555.toInt()); cornerRadius = dp(2).toFloat()
+        setColor(black)
+        setStroke(dp(1), 0x66FFFFFF)
+        cornerRadius = 0f
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
