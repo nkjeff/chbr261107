@@ -158,17 +158,18 @@ class MainActivity : Activity() {
                     if(!image && node.tagName==='IMG') image=node.currentSrc||node.src;
                     node=node.parentElement;
                 }
-                var chosen=link||image;
-                return chosen?JSON.stringify({url:chosen,kind:link?'link':'image'}):null;
+                return if(link||image) JSON.stringify({link:link||'',image:image||''}) else null;
             })()""".trimIndent()
             targetWeb.evaluateJavascript(script) { value ->
-                val resolved = try {
+                val payload = try {
                     val decoded = JSONTokener(value ?: "null").nextValue() as? String
-                    decoded?.let { JSONObject(it).optString("url") }.orEmpty()
-                } catch (_: Exception) { "" }
-                val target = resolved.ifBlank { fallback }
-                if (target.isNotBlank() && (target.startsWith("http://") || target.startsWith("https://") || target.startsWith("data:image/"))) {
-                    runOnUiThread { addTab(target) }
+                    decoded?.let { JSONObject(it) }
+                } catch (_: Exception) { null }
+                val link = payload?.optString("link").orEmpty()
+                val image = payload?.optString("image").orEmpty()
+                val validLink = link.ifBlank { fallback.takeIf { it.startsWith("http://") || it.startsWith("https://") }.orEmpty() }
+                if (validLink.isNotBlank() || image.isNotBlank()) {
+                    runOnUiThread { showLongPressActions(validLink, image) }
                 }
             }
             true
@@ -330,3 +331,26 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 }
+
+    private fun showLongPressActions(link: String, image: String) {
+        val actions = mutableListOf<String>()
+        val urls = mutableListOf<String>()
+        if (link.isNotBlank()) { actions.add("在新标签页打开链接"); urls.add(link) }
+        if (image.isNotBlank()) { actions.add("Google 搜图"); urls.add("https://lens.google.com/uploadbyurl?url=" + URLEncoder.encode(image, "UTF-8")) }
+        val copyTarget = image.ifBlank { link }
+        if (copyTarget.isNotBlank()) { actions.add("复制地址"); urls.add(copyTarget) }
+        if (actions.isEmpty()) return
+        android.app.AlertDialog.Builder(this)
+            .setItems(actions.toTypedArray()) { _, which ->
+                when (actions[which]) {
+                    "在新标签页打开链接" -> addTab(urls[which])
+                    "Google 搜图" -> addTab(urls[which])
+                    "复制地址" -> {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", urls[which]))
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
