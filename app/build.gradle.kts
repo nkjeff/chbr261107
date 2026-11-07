@@ -9,8 +9,8 @@ android {
         applicationId = "com.nkjeff.chbr261107"
         minSdk = 23
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.20261107221423"
+        versionCode = 4
+        versionName = "1.0.20261107224729"
     }
     splits {
         abi {
