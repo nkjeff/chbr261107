@@ -28,7 +28,7 @@ import android.widget.TextView
 import java.net.URLEncoder
 
 class MainActivity : Activity() {
-    private data class BrowserTab(val web: WebView, var title: String = "新标签页", var url: String = "about:blank")
+    private data class BrowserTab(val web: WebView, var title: String = "新标签页", var url: String = "about:blank", var pendingClickPath: String? = null)
     private val tabs = mutableListOf<BrowserTab>()
     private var current = 0
     private lateinit var root: LinearLayout
@@ -90,7 +90,7 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun addTab(url: String, suppliedWebView: WebView? = null) {
+    private fun addTab(url: String, suppliedWebView: WebView? = null, pendingClickPath: String? = null) {
         val web = suppliedWebView ?: WebView(this)
         web.setBackgroundColor(black)
         web.settings.javaScriptEnabled = true
@@ -124,6 +124,18 @@ class MainActivity : Activity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 val tab = tabs.firstOrNull { it.web === view } ?: return
                 tab.url = url ?: tab.url
+                val clickPath = tab.pendingClickPath
+                if (clickPath != null && url?.startsWith("file://") == true) {
+                    tab.pendingClickPath = null
+                    val quotedPath = JSONObject.quote(clickPath)
+                    view?.evaluateJavascript("""(function(raw){
+                        try {
+                            var path=JSON.parse(raw), node=document.body;
+                            for(var i=0;i<path.length && node;i++) node=node.children[path[i]];
+                            if(node) node.click();
+                        } catch(e) {}
+                    })($quotedPath)""".trimIndent(), null)
+                }
                 if (tabs.getOrNull(current) === tab) {
                     if (!address.hasFocus()) address.setText(tab.url)
                     updateNavigation()
@@ -148,6 +160,11 @@ class MainActivity : Activity() {
                 var el=document.elementFromPoint(${cssX},${cssY});
                 if(!el) return null;
                 var node=el, link=null, image=null, depth=0;
+                var path=[], cursor=el;
+                while(cursor && cursor!==document.body){
+                    var parent=cursor.parentElement; if(!parent) break;
+                    path.unshift(Array.prototype.indexOf.call(parent.children,cursor)); cursor=parent;
+                }
                 while(node && depth++<12){
                     if(!link && node.tagName==='A' && node.href) link=node.href;
                     if(!link && node.getAttribute){
@@ -157,7 +174,7 @@ class MainActivity : Activity() {
                     if(!image && node.tagName==='IMG') image=node.currentSrc||node.src;
                     node=node.parentElement;
                 }
-                return (link||image) ? JSON.stringify({link:link||'',image:image||''}) : null;
+                return (link||image||path.length) ? JSON.stringify({link:link||'',image:image||'',path:JSON.stringify(path)}) : null;
             })()""".trimIndent()
             targetWeb.evaluateJavascript(script) { value ->
                 val payload = try {
@@ -166,13 +183,14 @@ class MainActivity : Activity() {
                 } catch (_: Exception) { null }
                 val link = payload?.optString("link").orEmpty()
                 val image = payload?.optString("image").orEmpty()
-                if (link.isNotBlank() || image.isNotBlank()) {
-                    runOnUiThread { showLongPressActions(link, image) }
+                val path = payload?.optString("path").orEmpty()
+                if (link.isNotBlank() || image.isNotBlank() || path.isNotBlank()) {
+                    runOnUiThread { showLongPressActions(link, image, path) }
                 }
             }
             true
         }
-        tabs.add(BrowserTab(web, url = url))
+        tabs.add(BrowserTab(web, url = url, pendingClickPath = pendingClickPath))
         selectTab(tabs.lastIndex)
         if (url != "about:blank") web.loadUrl(url)
     }
@@ -330,11 +348,12 @@ class MainActivity : Activity() {
     }
 
 
-    private fun showLongPressActions(link: String, image: String) {
+    private fun showLongPressActions(link: String, image: String, path: String) {
         val actions = mutableListOf<String>()
         val urls = mutableListOf<String>()
         if (link.isNotBlank()) { actions.add("在新标签页打开链接"); urls.add(link) }
         if (image.isNotBlank()) { actions.add("Google 搜图"); urls.add("https://lens.google.com/uploadbyurl?url=" + URLEncoder.encode(image, "UTF-8")) }
+        if (path.isNotBlank()) { actions.add("复制网页并在原处点击"); urls.add(path) }
         val copyTarget = image.ifBlank { link }
         if (copyTarget.isNotBlank()) { actions.add("复制地址"); urls.add(copyTarget) }
         if (actions.isEmpty()) return
@@ -343,6 +362,7 @@ class MainActivity : Activity() {
                 when (actions[which]) {
                     "在新标签页打开链接" -> addTab(urls[which])
                     "Google 搜图" -> addTab(urls[which])
+                    "复制网页并在原处点击" -> duplicatePageAndClick(urls[which])
                     "复制地址" -> {
                         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", urls[which]))
@@ -351,6 +371,20 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    
-}
+    }
+
+    private fun duplicatePageAndClick(path: String) {
+        val source = activeWeb() ?: return
+        val archive = java.io.File(cacheDir, "page_copy_${System.currentTimeMillis()}.mht")
+        source.saveWebArchive(archive.absolutePath, false) { savedPath ->
+            if (savedPath.isNullOrBlank()) {
+                runOnUiThread { android.widget.Toast.makeText(this, "网页副本保存失败", android.widget.Toast.LENGTH_SHORT).show() }
+                return@saveWebArchive
+            }
+            runOnUiThread {
+                addTab("file://" + savedPath, pendingClickPath = path)
+            }
+        }
+    }
+
 }
