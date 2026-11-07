@@ -8,9 +8,18 @@ android {
     defaultConfig {
         applicationId = "com.nkjeff.chbr261107"
         minSdk = 23
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += "arm64-v8a" }
+    }
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
+        }
     }
     buildTypes {
         debug { isMinifyEnabled = false }
