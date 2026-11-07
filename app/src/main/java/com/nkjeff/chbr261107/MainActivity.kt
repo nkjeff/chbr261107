@@ -17,6 +17,9 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.MotionEvent
+import org.json.JSONObject
+import org.json.JSONTokener
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -87,21 +90,30 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun addTab(url: String) {
-        val web = WebView(this)
+    private fun addTab(url: String, suppliedWebView: WebView? = null) {
+        val web = suppliedWebView ?: WebView(this)
         web.setBackgroundColor(black)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
         web.settings.loadsImagesAutomatically = true
         web.settings.useWideViewPort = true
         web.settings.loadWithOverviewMode = true
-        web.settings.javaScriptCanOpenWindowsAutomatically = false
-        web.settings.setSupportMultipleWindows(false)
+        web.settings.javaScriptCanOpenWindowsAutomatically = true
+        web.settings.setSupportMultipleWindows(true)
         web.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 val tab = tabs.firstOrNull { it.web === view } ?: return
                 tab.title = title?.takeIf { it.isNotBlank() } ?: tab.url
                 updateTabButton()
+            }
+
+            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                val popup = WebView(this@MainActivity)
+                addTab("about:blank", popup)
+                transport.webView = popup
+                resultMsg.sendToTarget()
+                return true
             }
         }
         web.webViewClient = object : WebViewClient() {
@@ -118,19 +130,48 @@ class MainActivity : Activity() {
                 }
             }
         }
-        web.setOnLongClickListener { view ->
-            val hit = (view as WebView).hitTestResult
-            val target = hit.extra.orEmpty()
-            val isLinkOrImage = hit.type == WebView.HitTestResult.ANCHOR_TYPE ||
-                hit.type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
-                hit.type == WebView.HitTestResult.IMAGE_TYPE ||
-                hit.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
-            if (!isLinkOrImage || target.isBlank()) {
-                false
-            } else {
-                addTab(target)
-                true
+        var lastTouchX = 0f
+        var lastTouchY = 0f
+        web.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
+                lastTouchX = event.x
+                lastTouchY = event.y
             }
+            false
+        }
+        web.setOnLongClickListener { view ->
+            val targetWeb = view as WebView
+            val fallback = targetWeb.hitTestResult?.extra.orEmpty()
+            val density = resources.displayMetrics.density * targetWeb.scale
+            val cssX = (lastTouchX / density).toInt()
+            val cssY = (lastTouchY / density).toInt()
+            val script = """(function(){
+                var el=document.elementFromPoint(${cssX},${cssY});
+                if(!el) return null;
+                var node=el, link=null, image=null, depth=0;
+                while(node && depth++<12){
+                    if(!link && node.tagName==='A' && node.href) link=node.href;
+                    if(!link && node.getAttribute){
+                        var candidate=node.getAttribute('data-href')||node.getAttribute('data-url')||node.getAttribute('formaction');
+                        if(candidate){try{link=new URL(candidate,document.baseURI).href;}catch(e){}}
+                    }
+                    if(!image && node.tagName==='IMG') image=node.currentSrc||node.src;
+                    node=node.parentElement;
+                }
+                var chosen=link||image;
+                return chosen?JSON.stringify({url:chosen,kind:link?'link':'image'}):null;
+            })()""".trimIndent()
+            targetWeb.evaluateJavascript(script) { value ->
+                val resolved = try {
+                    val decoded = JSONTokener(value ?: "null").nextValue() as? String
+                    decoded?.let { JSONObject(it).optString("url") }.orEmpty()
+                } catch (_: Exception) { "" }
+                val target = resolved.ifBlank { fallback }
+                if (target.isNotBlank() && (target.startsWith("http://") || target.startsWith("https://") || target.startsWith("data:image/"))) {
+                    runOnUiThread { addTab(target) }
+                }
+            }
+            true
         }
         tabs.add(BrowserTab(web, url = url))
         selectTab(tabs.lastIndex)
