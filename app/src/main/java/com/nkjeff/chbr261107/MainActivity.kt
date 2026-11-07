@@ -157,7 +157,7 @@ class MainActivity : Activity() {
                     if(!image && node.tagName==='IMG') image=node.currentSrc||node.src;
                     node=node.parentElement;
                 }
-                return if(link||image) JSON.stringify({link:link||'',image:image||''}) else null;
+                return (link||image) ? JSON.stringify({link:link||'',image:image||''}) : null;
             })()""".trimIndent()
             targetWeb.evaluateJavascript(script) { value ->
                 val payload = try {
