@@ -24,12 +24,23 @@ jobs:
           gradle-version: '8.9'
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
-      - name: Verify APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Verify APK and ABI contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          unzip -t "$APK"
+          if unzip -Z1 "$APK" | awk -F/ '$1 == "lib" && $2 != "arm64-v8a" { bad=1 } END { exit bad ? 0 : 1 }'; then
+            echo "Unexpected non-ARM64 native library found"
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$APK" dist/chbr261107-arm64-v8a-debug.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: chbr261107-arm64v8a-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: chbr261107-arm64-v8a-debug
+          path: dist/chbr261107-arm64-v8a-debug.apk
           if-no-files-found: error
           retention-days: 14
