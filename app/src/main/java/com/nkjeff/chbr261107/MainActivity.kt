@@ -141,7 +141,6 @@ class MainActivity : Activity() {
         }
         web.setOnLongClickListener { view ->
             val targetWeb = view as WebView
-            val fallback = targetWeb.hitTestResult?.extra.orEmpty()
             val density = resources.displayMetrics.density * targetWeb.scale
             val cssX = (lastTouchX / density).toInt()
             val cssY = (lastTouchY / density).toInt()
@@ -167,9 +166,8 @@ class MainActivity : Activity() {
                 } catch (_: Exception) { null }
                 val link = payload?.optString("link").orEmpty()
                 val image = payload?.optString("image").orEmpty()
-                val validLink = link.ifBlank { fallback.takeIf { it.startsWith("http://") || it.startsWith("https://") }.orEmpty() }
-                if (validLink.isNotBlank() || image.isNotBlank()) {
-                    runOnUiThread { showLongPressActions(validLink, image) }
+                if (link.isNotBlank() || image.isNotBlank()) {
+                    runOnUiThread { showLongPressActions(link, image) }
                 }
             }
             true
@@ -330,7 +328,7 @@ class MainActivity : Activity() {
         tabs.clear()
         super.onDestroy()
     }
-}
+
 
     private fun showLongPressActions(link: String, image: String) {
         val actions = mutableListOf<String>()
@@ -353,4 +351,5 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    }
+    
+}
